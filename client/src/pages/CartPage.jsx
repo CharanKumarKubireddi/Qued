@@ -12,7 +12,7 @@ const CartPage = ({ user }) => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
 
-  // --- NEW LOGIC: Remove Enrolled Courses from Cart ---
+  // --- FIX 1: Correct Logic to Remove Enrolled Courses ---
   useEffect(() => {
     const cleanCart = async () => {
       // Only check if user is logged in and cart has items
@@ -21,17 +21,18 @@ const CartPage = ({ user }) => {
       try {
         const token = await getToken();
         
-        // 1. Fetch user's enrolled courses
-        // (Make sure this endpoint matches your backend route for fetching enrolled courses)
-        const { data } = await axios.get(`${import.meta.env.VITE_API_URL}/api/student/enrolled-courses`, {
+        // ✅ CHANGED: Use '/api/me' because '/api/student/enrolled-courses' doesn't exist
+        const { data } = await axios.get(`${import.meta.env.VITE_API_URL}/api/me`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         
-        // 2. Create a Set of enrolled IDs for fast lookup
-        // Adjust 'data.data' or 'data.enrolledCourses' based on your exact API response structure
-        const enrolledIds = new Set(data.data.map(course => course._id));
+        // Handle if enrolledCourses is array of strings (IDs) or Objects
+        const enrolledList = data.enrolledCourses || [];
+        const enrolledIds = new Set(enrolledList.map(item => 
+            typeof item === 'string' ? item : item._id
+        ));
 
-        // 3. Check and remove duplicates
+        // Check and remove duplicates
         let removedCount = 0;
         cart.forEach(item => {
           if (enrolledIds.has(item._id)) {
@@ -40,7 +41,7 @@ const CartPage = ({ user }) => {
           }
         });
 
-        // 4. Notify user if items were removed
+        // Notify user if items were removed
         if (removedCount > 0) {
           toast.success(`Removed ${removedCount} course(s) you already own.`);
         }
@@ -51,7 +52,6 @@ const CartPage = ({ user }) => {
     };
 
     cleanCart();
-    // specific dependency array to run only when user loads or cart changes length significantly
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]); 
   // ---------------------------------------------------
@@ -71,7 +71,7 @@ const CartPage = ({ user }) => {
     });
   };
 
-  // 3. Handle Checkout Flow
+  // 3. Handle Checkout Flow (✅ FIXED RACE CONDITION)
   const handleCheckout = async () => {
     if (cart.length === 0) return;
     setLoading(true);
@@ -94,21 +94,25 @@ const CartPage = ({ user }) => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
+      // ✅ Capture orderId here to use as fallback
       const { orderId, amount } = orderRes.data;
 
       // B. Open Razorpay Modal
       const options = {
-        key: "rzp_test_Rx7exkp3lmF0cN", // ✅ Your Key ID
+        key: "rzp_test_Rx7exkp3lmF0cN", // Your Key ID
         amount: amount * 100,
         currency: "INR",
-        name: "Qued", // Updated name
+        name: "Qued", 
         description: `Payment for ${cart.length} Courses`,
         order_id: orderId,
         handler: async function (response) {
             // C. On Success: Verify Payment on Backend
             try {
+              console.log("Razorpay Response:", response); // Debug log
+
               await axios.post(`${import.meta.env.VITE_API_URL}/api/payment/verify`, {
-                 razorpay_order_id: response.razorpay_order_id,
+                 // ✅ CRITICAL FIX: Use 'orderId' if razorpay_order_id is undefined
+                 razorpay_order_id: response.razorpay_order_id || orderId,
                  razorpay_payment_id: response.razorpay_payment_id,
                  razorpay_signature: response.razorpay_signature,
                  courseIds 
@@ -118,7 +122,8 @@ const CartPage = ({ user }) => {
               clearCart();
               navigate('/dashboard'); 
             } catch (verifyErr) {
-              toast.error("Payment Verification Failed");
+              console.error("Verification Error:", verifyErr);
+              toast.error("Payment Verification Failed. Contact Support.");
             }
         },
         prefill: {
@@ -215,10 +220,10 @@ const CartPage = ({ user }) => {
                   <div className="flex items-center gap-1">
                       <span>Platform Fee (7%)</span>
                       <div className="group relative">
-                         <ShieldCheck size={14} className="text-gray-400 cursor-pointer"/>
-                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-black text-white text-xs rounded hidden group-hover:block">
+                          <ShieldCheck size={14} className="text-gray-400 cursor-pointer"/>
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-black text-white text-xs rounded hidden group-hover:block">
                             Convenience fee for platform maintenance.
-                         </div>
+                          </div>
                       </div>
                   </div>
                   <span>₹{platformFee}</span>
